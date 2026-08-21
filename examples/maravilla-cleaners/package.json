@@ -1,0 +1,15 @@
+{
+  "name": "pinecall-maravilla-cleaners-example",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "tap": "node scripts/tap.mjs",
+    "start": "pinecall run agent.mjs",
+    "converse": "node scripts/converse.mjs"
+  },
+  "dependencies": {
+    "@pinecall/sdk": "file:../../",
+    "dotenv": "^17.4.2",
+    "zod": "^3.24.0"
+  }
+}
