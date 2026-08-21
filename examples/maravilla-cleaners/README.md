@@ -1,0 +1,177 @@
+# Maravilla Cleaners — demo agent
+
+A front-desk voice/chat agent for Maravilla Cleaners, a real cleaning-services
+company (residential, commercial and specialty work). Built to show four
+pieces of the SDK working together end to end: **tap** (site → knowledge
+base), **knowledge bases** (grounded answers), **tools** (a demo CRM), and
+the **run console** (`pinecall run`).
+
+## What's real, what's fictional
+
+| | source |
+|---|---|
+| What Maravilla Cleaners does, its services, industries, article library | **real** — [maravillacleaners.com](https://maravillacleaners.com/), tapped into the knowledge base (see below) |
+| Prices, crews, availability, customers, bookings | **fictional demo data** — `crm/data.json`, invented for this example |
+
+The agent is instructed to answer company questions only from the knowledge
+base and to say "I'm not sure" rather than guess — try asking it something
+the site doesn't cover.
+
+## Why `npm run tap` doesn't do a plain tap
+
+`maravillacleaners.com` is a pure client-rendered SPA (React/Vite bundle) —
+every page's HTML body is a bare `<div id="root"></div>`; the content is
+drawn in by JavaScript after load. `@pinecall/sdk/tap` has no headless
+browser, by design (see `docs/guides/tap.md`), so `planTap` on this site
+comes back with `needsJs: true` and **0 words** on every one of its 59 pages.
+
+The site itself anticipates this: its `robots.txt` points AI crawlers at
+`/llms.txt` — "Reading guide for language models" — and that file is
+static, plain-text markdown covering the company, its services (54 pages),
+industries (13 pages) and article library. Its own "Using this content"
+section explicitly allows crawling, indexing and quoting it, including for
+AI grounding. `scripts/tap.mjs` tries `planTap`/`tap`/`syncTap` first (so a
+future SSR version of the site would just work); when that comes back empty
+it fetches `/llms.txt`, splits it by its `##` sections into a handful of
+markdown documents, and pushes them into the knowledge base with the SDK's
+`pushDocs` — upsert by path, so re-running the script is idempotent exactly
+like `syncTap` would be.
+
+## Setup
+
+```bash
+cp .env.example .env
+# edit .env: PINECALL_API_KEY=pk_...
+npm install
+npm run tap   # creates the KB on first run, prints MARAVILLA_KB_ID — add it to .env
+npm start     # pinecall run agent.mjs
+```
+
+## Commands
+
+| command | what it does |
+|---|---|
+| `npm run tap` | (re)index the site into the demo knowledge base — idempotent |
+| `npm start` | `pinecall run agent.mjs` — boots `dev-maravilla`, prints the web console URL (`http://127.0.0.1:4747`) |
+| `npm run converse` | talk to the running agent through six scripted real-message cases, pass/fail per case |
+
+With the agent running, `pinecall run agent.mjs --call +1…` rings your phone,
+and `c` in the terminal opens a one-line chat prompt.
+
+### Tap numbers (this run)
+
+```
+discovered via sitemap: 59/60 pages included (1 excluded, 59 thin, 59 needsJs), ~0 tokens
+every page needs JS to render (0 tokens extracted) — falling back to https://maravillacleaners.com/llms.txt
+llms.txt: 24443 chars → 9 docs (overview.md, start-here.md, read-these-first-the-4-most-comprehensive-pieces.md,
+  perspectives-all-41-published-articles-newest-first.md, service-pages-54.md, industry-pages-13.md,
+  full-url-inventory.md, using-this-content.md, contact.md)
+  ✓ overview.md  ✓ start-here.md  ✓ read-these-first-the-4-most-comprehensive-pieces.md
+  ✓ perspectives-all-41-published-articles-newest-first.md  ✓ service-pages-54.md  ✓ industry-pages-13.md
+  ✓ full-url-inventory.md  ✓ using-this-content.md  ✓ contact.md
+```
+
+Knowledge base: `maravilla-cleaners-demo`, id `6a88ce38093d0c0b471822b4` — re-running `npm run tap`
+with `MARAVILLA_KB_ID` set re-pushes the same 9 paths (confirmed: doc count stayed at 9 after a
+second run — `pushDocs` upserts by path).
+
+## The six tools (`tools.mjs` → `crm/index.mjs`)
+
+All demo data, in-memory: `crm/data.json` is the seed (fictional prices, three
+crews, two sample customers, one past booking); every booking a call makes
+lives only for the current `pinecall run` process and resets when it restarts.
+
+- `lookupCustomer({ phone, email })` — existing customer + past bookings
+- `getQuote({ service, bedrooms, bathrooms, sqft?, frequency? })` — price range + duration
+- `checkAvailability({ date, area|zip, service })` — open slots + the crew that'd take it
+- `bookCleaning({ customer, service, date, slot, address, notes? })` — confirmation id
+- `listCrews()` — the crew roster (areas, languages, skills, rating)
+- `escalateToHuman({ reason })` — records a callback request
+
+## Self-check — real messages, not `pinecall test`
+
+Verified by talking to the running `dev-maravilla` agent, both through the
+Pinecall MCP `chat` tool and the replayable `scripts/converse.mjs` (same
+`llm.chat` WebSocket protocol `pinecall chat` uses). `npm run converse` runs
+all six and prints pass/fail; last run: **6/6 passed**.
+
+### 1. Service question — answered from the tapped KB
+
+```
+you › Hi, what kind of cleaning services does Maravilla offer?
+bot › Hi! Maravilla Cleaners offers a wide range of cleaning services across residential,
+      commercial, and specialty work. These include cleaning for offices, healthcare
+      facilities, data centers, hotels, construction handover sites, industrial and retail
+      sites, and homes.
+      We also provide specialty services like deep cleaning, move-in/out cleaning,
+      antimicrobial shielding, biohazard remediation, carpet upholstery, disaster recovery,
+      and many more.
+```
+✓ PASS — matches the "Service pages" and "Start here" sections of the tapped KB.
+
+### 2. Areas served — answered from the tapped KB
+
+```
+you › Good to know. What areas or locations do you serve?
+bot › I don't have the specific list of cities and states served right here, but Maravilla
+      Cleaners covers multiple locations. For detailed info on the exact areas or cities we
+      serve, you can check our Locations page on the website.
+```
+✓ PASS — the KB doesn't list specific cities (llms.txt only links to `/locations`), and the
+agent says so instead of inventing a list — exactly the "don't guess" instruction working.
+
+### 3. Quote for a 3-bed/2-bath deep clean — `getQuote`
+
+```
+you › Hi, can I get a quote for a deep clean? It's a 3 bedroom, 2 bathroom house.
+bot › For a deep clean of your 3-bedroom, 2-bathroom house, the estimated price range is
+      $266 to $325. The cleaning would take about 3 to 4 hours. This is a one-time service
+      estimate. Would you like to check available dates to book?
+  ⚡ getQuote({"service":"deep","bedrooms":3,"bathrooms":2})
+```
+✓ PASS — correct tool + args; price matches `crm/data.json` (`160 + 25×3 + 30×2 = 295`, ±10%).
+
+### 4. Availability on a date — `checkAvailability`
+
+```
+you › Yes, what's available on 2026-09-01? I'm in the downtown area.
+bot › On September 1, 2026, in downtown, Team Aurora is available for a deep cleaning with
+      slots at 09:00, 11:00, 13:00, and 15:00. They have a 4.9 rating and speak English and
+      Spanish. Which time would you prefer?
+  ⚡ checkAvailability({"date":"2026-09-01","area":"downtown","service":"deep"})
+```
+✓ PASS — correct tool + args; matches Team Aurora's seeded profile.
+
+### 5. Full booking flow — `bookCleaning` + confirmation id
+
+```
+you › Let's do 11:00. My name is Carla Mendez, phone +13055559999, address 100 Brickell Ave, Miami, FL.
+bot › Just to confirm: you want to book a deep cleaning for a 3-bedroom, 2-bathroom house on
+      2026-09-01 at 11:00, downtown area, with Team Aurora... Is that all correct?
+you › Yes, that's all correct, please book it.
+bot › You're all set! Your deep cleaning with Team Aurora is booked for 2026-09-01 at 11:00
+      at 100 Brickell Ave, Miami, FL. Your confirmation ID is BK-1002.
+  ⚡ bookCleaning({"customer":"Carla Mendez, +13055559999","service":"deep","date":"2026-09-01","slot":"11:00","address":"100 Brickell Ave, Miami, FL"})
+```
+✓ PASS — confirms before booking, calls `bookCleaning`, returns a real confirmation id.
+
+### 6. Off-topic complaint — `escalateToHuman`
+
+```
+you › Actually, I want to file a complaint — my last cleaner broke a vase and nobody has
+      called me back about it. Can I talk to a manager?
+bot › I'm sorry to hear about the broken vase and that you haven't been contacted yet. I've
+      flagged this so a manager can call you back to address your complaint directly.
+  ⚡ escalateToHuman({"reason":"Customer complaint about broken vase and no callback; requests to talk to a manager."})
+```
+✓ PASS — recognizes it's outside booking/pricing and escalates instead of guessing.
+
+## What this example teaches
+
+- **`@pinecall/sdk/tap`** — `planTap`/`tap`/`syncTap`, the `needsJs` flag, and what to do when
+  a site has nothing tap can read (fall back to its own `/llms.txt`, pushed with `pushDocs`).
+- **Knowledge bases** — `knowledgeBase: <id>`, `{{RAG_CONTEXT}}`, grounding an agent to say
+  "I don't know" instead of inventing an answer.
+- **Tools** — `tool()` + Zod schemas over a local, dependency-free demo CRM; a realistic
+  quote → availability → booking flow.
+- **The run console** — `pinecall run agent.mjs`, the web console at `:4747`, `--call`, `c` chat.
