@@ -8,12 +8,9 @@
  * to work over.
  */
 
-import { readFileSync } from "node:fs";
-import { fileURLToPath } from "node:url";
-import path from "node:path";
-
-const dataPath = path.join(path.dirname(fileURLToPath(import.meta.url)), "data.json");
-const seed = JSON.parse(readFileSync(dataPath, "utf8"));
+// Imported, not read from disk: the web app bundles this module, and a bundle
+// has no data.json next to it.
+import seed from "./data.json" with { type: "json" };
 
 // Deep-clone the seed so mutations during a run never touch the file on disk.
 const db = structuredClone(seed);

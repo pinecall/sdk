@@ -56,6 +56,14 @@ npm start     # pinecall run agent.mjs
 | `npm start` | `pinecall run agent.mjs` — boots `dev-maravilla`, prints the web console URL (`http://127.0.0.1:4747`) |
 | `npm run converse` | talk to the running agent through six scripted real-message cases, pass/fail per case |
 
+## The web version
+
+`web/` is the same agent as a site — **https://maravilla.bernardocastro.dev** —
+built like [`dental-desk-sse`](https://github.com/pinecall/dental-desk-sse):
+one Express + React Router 7 process with the agent inside it, a page where a
+visitor talks by WebRTC or types, and a live panel that watches every call over
+SSE. It shares this example's knowledge base and its `crm/`. See `web/README.md`.
+
 With the agent running, `pinecall run agent.mjs --call +1…` rings your phone,
 and `c` in the terminal opens a one-line chat prompt.
 

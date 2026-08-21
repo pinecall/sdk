@@ -1,0 +1,10 @@
+node_modules/
+build/
+.react-router/
+.env
+db.json
+.DS_Store
+pinecall.log
+
+# The deploy runs `npm ci` on the box: the lock has to travel.
+!package-lock.json
