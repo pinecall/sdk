@@ -52,6 +52,7 @@ npm start     # pinecall run agent.mjs
 | command | what it does |
 |---|---|
 | `npm run tap` | (re)index the site into the demo knowledge base — idempotent |
+| `npm run scrape` | Playwright-render every page and index the real content too — idempotent |
 | `npm start` | `pinecall run agent.mjs` — boots `dev-maravilla`, prints the web console URL (`http://127.0.0.1:4747`) |
 | `npm run converse` | talk to the running agent through six scripted real-message cases, pass/fail per case |
 
@@ -74,6 +75,50 @@ llms.txt: 24443 chars → 9 docs (overview.md, start-here.md, read-these-first-t
 Knowledge base: `maravilla-cleaners-demo`, id `6a88ce38093d0c0b471822b4` — re-running `npm run tap`
 with `MARAVILLA_KB_ID` set re-pushes the same 9 paths (confirmed: doc count stayed at 9 after a
 second run — `pushDocs` upserts by path).
+
+## Full-site scrape (`npm run scrape`)
+
+`llms.txt` is a hand-curated 9-document summary the site owner publishes for crawlers — useful,
+but not the actual pages: it doesn't have the per-service or per-industry detail (what
+`biohazard-remediation` covers, whether `gsa-schedule` federal work is offered, what
+`industries/healthcare` says). `scripts/scrape.mjs` renders every page for real with
+[Playwright](https://playwright.dev/) — this site is a client-rendered SPA (`<div id="root">`),
+so a plain `fetch` sees nothing — extracts the main content with the same Defuddle+linkedom
+pipeline `@pinecall/sdk/tap` uses internally, and pushes it into the *same* knowledge base the
+`llms.txt` docs live in, one doc per page (`path` = the URL path, e.g.
+`/solutions/deep-cleaning` → `solutions/deep-cleaning.md`), plus one `_site.md` for the
+handful of lines repeated on more than half the pages (nav, footer, contact info — useful, but
+only needed once). Idempotent: `pushDocs` upserts by path, so a second run updates the same
+84 docs instead of duplicating them.
+
+Crawl is polite by design: one page at a time, 300 ms between pages, same-origin only, capped
+at 80 pages; URLs come from `sitemap.xml` (a `sitemapindex` here, followed one level).
+
+```bash
+npm run scrape
+```
+
+### Scrape numbers (this run)
+
+```
+discovered 80 same-origin URLs (sitemap, capped at 80)
+... (per-page ✓/⋯/✗ lines omitted here — see the terminal for the full crawl log)
+boilerplate: 5 lines seen on > 50% of pages, kept once in _site.md
+pushing 76 docs to 6a88ce38093d0c0b471822b4 ...
+
+=== scrape totals ===
+pages rendered:  80
+pages kept:      75          (5 dropped: < 40 words after extraction — thin/empty shells)
+words:           16659
+tokens (~):      32781
+docs pushed:     76/76        (75 pages + _site.md)
+```
+
+The knowledge base now holds **84 documents** total: the 9 `llms.txt` docs plus the 76 scraped
+ones, minus one path collision (`contact.md` — both the `llms.txt` split and the rendered
+`/contact` page land on that path; the rendered page's fuller content won on the upsert, which
+is the intended behavior for a path that both routes produce). The other 8 `llms.txt` docs are
+untouched.
 
 ## The six tools (`tools.mjs` → `crm/index.mjs`)
 
@@ -166,10 +211,26 @@ bot › I'm sorry to hear about the broken vase and that you haven't been contac
 ```
 ✓ PASS — recognizes it's outside booking/pricing and escalates instead of guessing.
 
+### Retrieval probes — questions `llms.txt` alone couldn't answer
+
+Direct `knowledge query` calls (`node ../../dist/cli.js knowledge query <kb> "<q>"`), against
+content only the Playwright scrape put in the KB — no per-service or per-industry detail page
+exists in the 9 `llms.txt` docs:
+
+1. **"What does Maravilla's biohazard remediation service cover?"** — top hit (score 1.416):
+   `solutions/biohazard-remediation.md`, the rendered `/solutions/biohazard-remediation` page.
+2. **"What cleaning services does Maravilla offer for healthcare facilities?"** — top hit
+   (score 1.359): `industries/healthcare.md`, the rendered `/industries/healthcare` page.
+3. **"Does Maravilla work under a GSA schedule for federal facilities?"** — top hit
+   (score 1.307): `solutions/gsa-schedule.md`, the rendered `/solutions/gsa-schedule` page.
+
 ## What this example teaches
 
 - **`@pinecall/sdk/tap`** — `planTap`/`tap`/`syncTap`, the `needsJs` flag, and what to do when
   a site has nothing tap can read (fall back to its own `/llms.txt`, pushed with `pushDocs`).
+- **`scripts/scrape.mjs`** — when `needsJs` is true for real (a client-rendered SPA), the fix
+  is a headless browser: Playwright renders the page, the same extract-and-`pushDocs` pipeline
+  takes it from there. See "Full-site scrape" above.
 - **Knowledge bases** — `knowledgeBase: <id>`, `{{RAG_CONTEXT}}`, grounding an agent to say
   "I don't know" instead of inventing an answer.
 - **Tools** — `tool()` + Zod schemas over a local, dependency-free demo CRM; a realistic
