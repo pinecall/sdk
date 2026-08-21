@@ -1,0 +1,31 @@
+name: maravilla
+url: https://maravilla.bernardocastro.dev
+host:
+  ssh: berna@bernardocastro-box   # ~/.ssh/config: 10.8.0.2:2225 over WireGuard,
+  key: ~/.ssh/id_ed25519          # and it lands INSIDE the `bernardocastro` container
+remoteDir: ~/maravilla
+
+# Built locally; only the bundle and what the process needs travel.
+build: npm run build
+sync:
+  - local:
+      - ./package.json
+      - ./package-lock.json
+      - ./server.js
+    remote: ~/maravilla
+    delete: false
+  - local: ./build
+    remote: ~/maravilla/build
+    checksum: true
+
+postSync: npm ci --omit=dev --no-audit --no-fund
+
+# PORT, PINECALL_API_KEY, MARAVILLA_KB_ID and AGENT_SLUG live in ~/maravilla/.env
+# on the box — written once by hand over ssh, never synced (see `exclude`).
+start: node --env-file=.env server.js
+port: 2141
+
+exclude:
+  - .env
+  - .DS_Store
+  - node_modules
