@@ -13,7 +13,7 @@ function inline(text: string, key: string): ReactNode[] {
     const k = `${key}-${i}`;
     if (/^(\*\*|__)[\s\S]+\1$/.test(part)) return <strong key={k} className="font-semibold">{part.slice(2, -2)}</strong>;
     if (/^\*[^*]+\*$|^_[^_]+_$/.test(part)) return <em key={k}>{part.slice(1, -1)}</em>;
-    if (/^`[^`]+`$/.test(part)) return <code key={k} className="rounded bg-black/5 px-1 py-0.5 font-mono text-[13px] dark:bg-white/10">{part.slice(1, -1)}</code>;
+    if (/^`[^`]+`$/.test(part)) return <code key={k} className="rounded bg-black/10 px-1 py-0.5 font-mono text-[13px]">{part.slice(1, -1)}</code>;
     const link = part.match(/^\[([^\]]+)\]\(([^)\s]+)\)$/);
     const href = link ? link[2] : /^https?:\/\//.test(part) ? part : null;
     if (href) return <a key={k} href={href} target="_blank" rel="noreferrer" className="underline underline-offset-2">{link ? link[1] : part}</a>;

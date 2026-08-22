@@ -4,10 +4,89 @@
    A class-based variant is what lets the toggle win over prefers-color-scheme. */
 @custom-variant dark (&:where(.dark, .dark *));
 
-@theme {
-  --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
-  --color-accent: #0ea5a4;
+/* ── Tokens ───────────────────────────────────────────────────────────
+   Warm neutrals, never pure grey, and ONE accent. Every colour in the app
+   comes from this table: light below, dark under `.dark`, and Tailwind's
+   `@theme` maps them to utilities (`bg-surface`, `text-ink-2`, `border-line`).
+   Re-skinning the demo is editing eighteen lines. */
+:root {
+  --canvas: #f6f4f1;   /* the page behind everything */
+  --surface: #ffffff;  /* cards, bubbles, the main pane */
+  --inset: #efece7;    /* the sidebar, wells, quiet chips */
+  --line: #e3ded7;
+  --line-2: #d3ccc2;
+  --ink: #1b1917;
+  --ink-2: #6a635a;
+  --ink-3: #99928a;
+  --accent: #cd58b2;
+  --accent-ink: #ffffff;
+  --accent-soft: #fbeaf6;
+  --success: #0f8a5f;
+  --danger: #c33630;
 }
 
-html { font-feature-settings: "cv11", "ss01"; }
-body { @apply bg-neutral-50 text-neutral-900 antialiased dark:bg-neutral-950 dark:text-neutral-100; }
+.dark {
+  --canvas: #0d0c0f;
+  --surface: #17161b;
+  --inset: #121116;
+  --line: #262430;
+  --line-2: #35323f;
+  --ink: #f3f1f5;
+  --ink-2: #a49fae;
+  --ink-3: #746f7f;
+  --accent: #d97ac1;
+  --accent-ink: #1c0d18;
+  --accent-soft: #2b1a27;
+  --success: #3ecf9a;
+  --danger: #ff6f66;
+}
+
+@theme inline {
+  --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
+
+  --color-canvas: var(--canvas);
+  --color-surface: var(--surface);
+  --color-inset: var(--inset);
+  --color-line: var(--line);
+  --color-line-2: var(--line-2);
+  --color-ink: var(--ink);
+  --color-ink-2: var(--ink-2);
+  --color-ink-3: var(--ink-3);
+  --color-accent: var(--accent);
+  --color-accent-ink: var(--accent-ink);
+  --color-accent-soft: var(--accent-soft);
+  --color-success: var(--success);
+  --color-danger: var(--danger);
+}
+
+html { font-feature-settings: "cv11", "ss01"; height: 100%; }
+body { @apply h-full bg-canvas text-ink antialiased; }
+
+/* One focus ring for the whole app, on keyboard focus only. */
+@layer base {
+  :focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+    border-radius: 6px;
+  }
+}
+
+/* The live dot: a ring that leaves, so "live" reads without a label. */
+@keyframes pulse-ring {
+  0%   { box-shadow: 0 0 0 0 color-mix(in oklab, var(--success) 55%, transparent); }
+  70%  { box-shadow: 0 0 0 6px transparent; }
+  100% { box-shadow: 0 0 0 0 transparent; }
+}
+.dot-live { animation: pulse-ring 1.8s ease-out infinite; }
+
+/* The voice waveform: cheap CSS, no animation loop. */
+@keyframes wave {
+  0%, 100% { transform: scaleY(0.35); }
+  50%      { transform: scaleY(1); }
+}
+.wave-bar { animation: wave 900ms ease-in-out infinite; transform-origin: center; }
+
+/* Scrollbars that do not shout in either theme. */
+@supports (scrollbar-width: thin) {
+  .scroller { scrollbar-width: thin; scrollbar-color: var(--line-2) transparent; }
+}
