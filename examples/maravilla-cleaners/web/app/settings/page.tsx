@@ -8,6 +8,7 @@ export const action = async ({ request }: Route.ActionArgs) =>
 
 // `pinecall voices --language en` lists the catalogue.
 const VOICES = {
+  "elevenlabs/sarah": "Sarah · warm, clear (ElevenLabs)",
   "cartesia/sonic": "Sonic · quick, neutral",
   "elevenlabs/jessica": "Jessica · playful, warm",
   "elevenlabs/sarah": "Sarah · mature, reassuring",

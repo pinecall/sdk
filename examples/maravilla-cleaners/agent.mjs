@@ -23,7 +23,7 @@ import { tools } from "./tools.mjs";
 const pc = new Pinecall();
 
 export const agent = pc.agent("dev-maravilla", {
-  voice: "cartesia/sonic",
+  voice: "elevenlabs/sarah",
   llm: "openai/gpt-4.1-mini",
   language: "en",
   knowledgeBase: process.env.MARAVILLA_KB_ID,

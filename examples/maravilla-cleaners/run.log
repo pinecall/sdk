@@ -1,0 +1,7 @@
+
+  ⚡ booting dev-maravilla  ·  gpt-4.1-mini · cartesia/sonic
+  ⚙ tools: lookupCustomer, getQuote, checkAvailability, bookCleaning, listCrews, escalateToHuman
+  ☎ listening (no phone — webrtc/chat only)
+
+  ◉ console → http://127.0.0.1:4747   (p open · c chat · e events · q quit)
+

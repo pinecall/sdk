@@ -4,7 +4,7 @@ import { bus } from "~/lib/bus.server";
 const DEFAULTS = {
   name: "Maravilla Cleaners",
   greeting: "Thanks for calling Maravilla Cleaners — how can I help today?",
-  voice: "cartesia/sonic",
+  voice: "elevenlabs/sarah",
   language: "en",
   hours: "Monday to Friday, 8am to 6pm. Saturdays, 9am to 2pm.",
   services: "Regular cleaning\nDeep cleaning\nMove-out cleaning\nOffice cleaning",
