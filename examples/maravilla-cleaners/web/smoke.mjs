@@ -70,7 +70,7 @@ await check("http:// redirects to https://", async () => {
 await check("/ renders the front desk", async () => {
   const html = await fetch(SITE).then((r) => r.text());
   must(html.includes("Maravilla Cleaners"), "the page does not name Maravilla Cleaners");
-  must(html.includes("Watch"), "no Watch panel in the markup");
+  must(html.includes("Conversations"), "no conversations sidebar in the markup");
   return `${html.length} bytes`;
 });
 
