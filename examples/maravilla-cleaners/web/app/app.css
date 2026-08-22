@@ -1,5 +1,9 @@
 @import "tailwindcss";
 
+/* Theme: the visitor can force light or dark; "system" (the default) follows the OS.
+   A class-based variant is what lets the toggle win over prefers-color-scheme. */
+@custom-variant dark (&:where(.dark, .dark *));
+
 @theme {
   --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
   --color-accent: #0ea5a4;
