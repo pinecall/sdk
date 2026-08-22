@@ -54,6 +54,17 @@ export function startAgent() {
   agent.on("chat.started" as any, (call: any) => {
     log("chat.started", call);
     Call.start({ id: call.id, from: "chat", transport: "chat" });
+    // One prompt serves both channels, and its first rule — no lists, no
+    // markdown — is written for a mouth. In a chat window the words are READ,
+    // so lift it for this session only: the same agent, allowed to lay a
+    // reply out. The bubbles render markdown-lite.
+    call.addContext(
+      "You are typing in a chat window, not speaking out loud. The rule about " +
+      "no lists and no markdown does not apply here: keep replies short, put " +
+      "the figures that matter in **bold**, and use a short bullet list (`- `) " +
+      "when you are naming several things. Still no emojis, and still never " +
+      "invent a price, a slot or a confirmation.",
+    ).catch(() => {});
   });
   agent.on("call.ended", (call, reason) => (log("call.ended", call, reason), Call.end(call.id, reason)));
 

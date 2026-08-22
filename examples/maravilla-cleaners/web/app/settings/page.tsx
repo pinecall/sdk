@@ -6,12 +6,12 @@ export const loader = () => Settings.get();
 export const action = async ({ request }: Route.ActionArgs) =>
   Settings.update(Object.fromEntries(await request.formData()));
 
-// `pinecall voices --language en` lists the catalogue.
+// ElevenLabs is the only TTS this demo speaks with. The aliases come from
+// GET /v1/audio/voices?provider=elevenlabs&language=en (`pinecall voices
+// --language en` lists the same catalogue).
 const VOICES = {
-  "cartesia/sonic": "Sonic · quick, neutral",
-  "elevenlabs/jessica": "Jessica · playful, warm",
   "elevenlabs/sarah": "Sarah · mature, reassuring",
-  "elevenlabs/bella": "Bella · professional, bright",
+  "elevenlabs/jessica": "Jessica · playful, warm",
   "elevenlabs/eric": "Eric · smooth, trustworthy",
 };
 const LANGUAGES = { en: "English", es: "Español", pt: "Português" };
