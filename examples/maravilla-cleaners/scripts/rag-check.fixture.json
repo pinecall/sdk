@@ -1,0 +1,14 @@
+[
+  { "q": "Do you do mold fogging?", "expected": "solutions/mold-fogging.md" },
+  { "q": "Can you clean a hospital or medical office?", "expected": "industries/healthcare.md" },
+  { "q": "Do you offer pressure washing for a building exterior?", "expected": "solutions/pressure-washing.md" },
+  { "q": "What's your phone number?", "expected": "contact.md" },
+  { "q": "Where is Maravilla headquartered?", "expected": "contact.md" },
+  { "q": "Do you clean schools or university campuses?", "expected": "industries/education.md" },
+  { "q": "Do you handle biohazard cleanup?", "expected": "solutions/biohazard-remediation.md" },
+  { "q": "Can you do a move-out cleaning before I hand back the keys?", "expected": "solutions/move-in-out.md" },
+  { "q": "Do you do Airbnb turnover cleaning between guests?", "expected": "solutions/airbnb-turnover.md" },
+  { "q": "What's the complete list of every service page on your site?", "expected": "service-pages-54.md" },
+  { "q": "What are the most comprehensive guides on your site about compliance and government contracts?", "expected": "read-these-first-the-4-most-comprehensive-pieces.md" },
+  { "q": "Can I read customer reviews of Maravilla?", "expected": "reviews.md" }
+]

@@ -11,9 +11,12 @@
  * main content with the same Defuddle+linkedom pipeline `@pinecall/sdk/tap`
  * uses internally (`src/tap/extract.ts` isn't exported from the `/tap`
  * subpath — see the hand-in note on `render: true` — so it's reimplemented
- * here, ~20 lines, against the same two deps), and pushes it into the same
- * knowledge base the llms.txt docs live in. Idempotent by path: re-running
- * updates the same docs instead of duplicating them.
+ * here, ~20 lines, against the same two deps), enriches each page with an
+ * LLM header (scripts/enrich.mjs — descriptive title/breadcrumb/summary/
+ * questions/keywords, cached by content hash, `--no-enrich` skips it), and
+ * pushes it all into the same knowledge base the llms.txt docs live in.
+ * Idempotent by path: re-running updates the same docs instead of
+ * duplicating them.
  */
 
 import "dotenv/config";
@@ -21,6 +24,7 @@ import { chromium } from "playwright";
 import { parseHTML } from "linkedom";
 import { Defuddle } from "defuddle/node";
 import { pushDocs } from "@pinecall/sdk";
+import { enrichDocs } from "./enrich.mjs";
 
 const SITE = "https://maravillacleaners.com";
 const SITEMAP_URL = `${SITE}/sitemap.xml`;
@@ -30,6 +34,7 @@ const RENDER_WAIT_TEXT_CHARS = 200;
 const RENDER_WAIT_TIMEOUT_MS = 8000;
 const THIN_WORDS = 40;
 const BOILERPLATE_THRESHOLD = 0.5; // a line on > 50% of pages is boilerplate
+const NO_ENRICH = process.argv.includes("--no-enrich");
 
 const apiKey = process.env.PINECALL_API_KEY;
 const kbId = process.env.MARAVILLA_KB_ID;
@@ -195,8 +200,11 @@ if (boilerplateLines.length > 0) {
 const totalWords = rendered.reduce((sum, p) => sum + p.words, 0);
 const totalTokens = Math.ceil(rendered.map((p) => p.markdown).join("").length / 4);
 
-console.log(`pushing ${docs.length} docs to ${kbId} ...`);
-const results = await pushDocs(auth, kbId, docs);
+console.log(`enriching ${docs.length} docs${NO_ENRICH ? " — skipped (--no-enrich)" : " ..."}`);
+const { docs: enrichedDocs, summary: enrichSummary } = await enrichDocs(docs, { apiKey, noEnrich: NO_ENRICH, source: "scrape" });
+
+console.log(`pushing ${enrichedDocs.length} docs to ${kbId} ...`);
+const results = await pushDocs(auth, kbId, enrichedDocs);
 let pushedOk = 0;
 for (const r of results) {
   if (r.ok) pushedOk += 1;
@@ -209,4 +217,7 @@ console.log(`pages rendered:  ${urls.length}`);
 console.log(`pages kept:      ${rendered.length}`);
 console.log(`words:           ${totalWords}`);
 console.log(`tokens (~):      ${totalTokens}`);
-console.log(`docs pushed:     ${pushedOk}/${docs.length}`);
+console.log(`docs pushed:     ${pushedOk}/${enrichedDocs.length}`);
+if (!NO_ENRICH) {
+  console.log(`enrich:          ${enrichSummary.enriched} enriched, ${enrichSummary.cached} cached, ${enrichSummary.errors} errors, ${enrichSummary.titlesChanged} titles replaced, $${enrichSummary.costUSD}`);
+}
