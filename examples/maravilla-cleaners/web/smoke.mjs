@@ -113,17 +113,24 @@ await check("GET /api/events streams (nothing buffers it)", async () => {
   }
 });
 
+// One socket for both chat assertions — the way the page holds one. Two
+// sockets would also pass, and would teach the log to show a session per
+// message, which is precisely the bug this site had.
+let chatWs;
 await check("the agent answers a chat message", async () => {
-  const reply = await chat(chatServer, chatToken, "What services do you offer?");
-  must(reply.length > 20, `reply was ${JSON.stringify(reply)}`);
-  return `"${reply.slice(0, 60)}…"`;
+  chatWs = await open(chatServer, chatToken);
+  const { text } = await turn(chatWs, "What services do you offer?");
+  must(text.length > 20, `reply was ${JSON.stringify(text)}`);
+  return `"${text.slice(0, 60)}…"`;
 });
 
-await check("the agent uses its tools", async () => {
-  const { text, tools } = await chatTools(chatServer, chatToken, "How much for a deep clean of a 3 bedroom, 2 bathroom house?");
+await check("the agent uses its tools, still in the same session", async () => {
+  must(chatWs, "no chat session to reuse");
+  const { text, tools } = await turn(chatWs, "How much for a deep clean of a 3 bedroom, 2 bathroom house?");
   must(tools.includes("getQuote"), `tools called: ${tools.join(", ") || "none"} · reply "${text.slice(0, 60)}"`);
   return tools.join(", ");
 });
+chatWs?.close();
 
 await check("the agent is registered and active", async () => {
   must(KEY, "no PINECALL_API_KEY to ask with");
@@ -152,27 +159,20 @@ function open(server, token) {
   });
 }
 
-async function chat(server, token, text) {
-  return (await chatTools(server, token, text)).text;
-}
-
-async function chatTools(server, token, text) {
-  const ws = await open(server, token);
+/** One turn on an already-open socket: send, wait for chat.done. */
+function turn(ws, text) {
   const tools = [];
-  try {
-    return await new Promise((ok, no) => {
-      const t = setTimeout(() => no(new Error("no reply in 45s")), 45000);
-      ws.on("message", (raw) => {
-        const d = JSON.parse(raw.toString());
-        if (d.event?.endsWith("chat.tool_call")) for (const c of d.tool_calls ?? []) tools.push(c.name);
-        if (d.event?.endsWith("chat.done")) (clearTimeout(t), ok({ text: d.text ?? "", tools }));
-        if (d.event?.endsWith("chat.error")) (clearTimeout(t), no(new Error(d.error ?? "chat error")));
-      });
-      ws.send(JSON.stringify({ event: "message", text }));
-    });
-  } finally {
-    ws.close();
-  }
+  return new Promise((ok, no) => {
+    const t = setTimeout(() => (ws.off("message", on), no(new Error("no reply in 45s"))), 45000);
+    const on = (raw) => {
+      const d = JSON.parse(raw.toString());
+      if (d.event?.endsWith("chat.tool_call")) for (const c of d.tool_calls ?? []) tools.push(c.name);
+      if (d.event?.endsWith("chat.done")) (clearTimeout(t), ws.off("message", on), ok({ text: d.text ?? "", tools }));
+      if (d.event?.endsWith("chat.error")) (clearTimeout(t), ws.off("message", on), no(new Error(d.error ?? "chat error")));
+    };
+    ws.on("message", on);
+    ws.send(JSON.stringify({ event: "message", text }));
+  });
 }
 
 console.log(failed === 0 ? "\n  all green\n" : `\n  ${failed} failed\n`);

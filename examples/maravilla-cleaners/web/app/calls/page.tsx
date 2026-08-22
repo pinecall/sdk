@@ -6,6 +6,7 @@ import type { Route } from "./+types/page";
 import { Call, type CallRow, type Line } from "./model.server";
 import { AGENT } from "~/lib/agent-id.server";
 import { Settings } from "~/settings/model.server";
+import { Markdown } from "./markdown";
 
 export const loader = () => ({
   calls: Call.recent(),
@@ -120,21 +121,81 @@ const IDLE = { status: "idle", phase: "idle", messages: [], isMuted: false, dura
 
 // ── 3. …or type instead ───────────────────────────────────────────────
 // The same agent, same tools, same knowledge base — over the chat channel.
+//
+// One conversation per visitor, and it survives everything. The socket is
+// opened when the panel mounts (not on the first keystroke: `connect()`
+// resolves as soon as the WebSocket exists, so a `send()` chained onto it lands
+// on a CONNECTING socket and ChatSession drops it on the floor) and a `thread`
+// id kept in localStorage means a refresh, a tab left in the background or a
+// redeploy reconnects into the SAME conversation — the server replays the
+// history into the model, so the agent still knows the quote it just gave.
+
+const THREAD_KEY = "maravilla.chat.thread";
+
+function threadId(): string {
+  try {
+    const kept = localStorage.getItem(THREAD_KEY);
+    if (kept) return kept;
+    const fresh = crypto.randomUUID();
+    localStorage.setItem(THREAD_KEY, fresh);
+    return fresh;
+  } catch {
+    // Private mode with storage blocked: one conversation for this page life.
+    return crypto.randomUUID();
+  }
+}
+
+/**
+ * Resolves when the server has answered `chat.connected` — not before.
+ *
+ * Nothing here calls `connect()` a second time, and that is the point.
+ * `ChatSession.connect()` only assigns `this.ws` AFTER awaiting the token, so
+ * its `if (this.ws) return` guard does not hold against a concurrent call: two
+ * overlapping connects open two WebSockets, and every WebSocket is one more
+ * conversation on the server. The panel connects exactly once, on mount, and
+ * lets the session's own auto-reconnect handle a socket that dies.
+ */
+function whenConnected(session: ChatSession, ms = 20000) {
+  if (session.getState().status === "connected") return Promise.resolve();
+  return new Promise<void>((resolve, reject) => {
+    let off = () => {};
+    const timer = setTimeout(() => (off(), reject(new Error("chat did not connect"))), ms);
+    off = session.subscribe(() => {
+      const { status } = session.getState();
+      if (status === "connected") (clearTimeout(timer), off(), resolve());
+      if (status === "destroyed") (clearTimeout(timer), off(), reject(new Error("chat destroyed")));
+    });
+  });
+}
+
 function BrowserChat({ agent }: { agent: string }) {
   const sessionRef = useRef<ChatSession | null>(null);
+  // The chat client is a dynamic import: someone who types in the first second
+  // is typing before it lands. Awaiting this promise is what keeps that message
+  // instead of dropping it on an empty ref.
+  const arriving = useRef<Promise<ChatSession> | null>(null);
   const [ready, setReady] = useState(false);
   const [draft, setDraft] = useState("");
   const log = useRef<HTMLOListElement | null>(null);
 
   useEffect(() => {
-    import("@pinecall/web/chat").then(({ ChatSession }) => {
-      sessionRef.current = new ChatSession({
+    let cleanup = () => {};
+    arriving.current = import("@pinecall/web/chat").then(({ ChatSession }) => {
+      const session = new ChatSession({
         agent,
+        thread: threadId(),
         tokenProvider: () => fetch("/api/chat-token", { method: "POST" }).then((r) => r.json()),
       });
+      sessionRef.current = session;
       setReady(true);
+      void session.connect();
+      // A conversation people read between messages outlives any idle timeout a
+      // proxy might impose: a cleared context block is a no-op the socket feels.
+      const beat = setInterval(() => session.setContext("keepalive", null), 25_000);
+      cleanup = () => (clearInterval(beat), session.destroy());
+      return session;
     });
-    return () => sessionRef.current?.destroy();
+    return () => cleanup();
   }, [agent]);
 
   const state = useSyncExternalStore(
@@ -144,43 +205,72 @@ function BrowserChat({ agent }: { agent: string }) {
   );
 
   useEffect(() => {
-    log.current?.scrollTo({ top: log.current.scrollHeight });
-  }, [state.messages.length, state.streamingText]);
+    log.current?.scrollTo({ top: log.current.scrollHeight, behavior: "smooth" });
+  }, [state.messages.length, state.streamingText, state.typing]);
 
   const send = async (event: React.FormEvent) => {
     event.preventDefault();
     const text = draft.trim();
-    if (!text || !sessionRef.current) return;
+    if (!text || state.typing) return;
     setDraft("");
-    if (state.status !== "connected") await sessionRef.current.connect();
-    sessionRef.current.send(text);
+    try {
+      const session = await arriving.current;
+      if (!session) throw new Error("no chat client");
+      await whenConnected(session);     // what the very first message needs
+      session.send(text);
+    } catch {
+      setDraft(text);                   // nothing was sent — give the words back
+    }
   };
 
+  const busy = state.typing || state.messages.some((m) => m.isStreaming);
+
   return (
-    <section className="space-y-5">
+    <section className="flex h-[30rem] flex-col gap-4">
       <SectionTitle>…or type</SectionTitle>
-      <ol ref={log} className="max-h-72 space-y-3 overflow-y-auto">
-        {state.messages.length === 0 && <p className="text-sm text-neutral-400">Ask it anything — “what do you clean?”, “how much for a deep clean of a two-bedroom?”</p>}
+      <ol ref={log} className="min-h-0 flex-1 space-y-3 overflow-y-auto pr-1">
+        {state.messages.length === 0 && (
+          <p className="text-sm text-neutral-400">
+            Ask it anything — “what do you clean?”, “how much for a deep clean of a two-bedroom?”
+          </p>
+        )}
         {state.messages.map((m) =>
           m.role === "system"
             ? <Bubble key={m.id} who="tool" text={m.text.replace(/^🔧 Using |^✓ /, "").replace(/…$/, "")} draft={m.text.startsWith("🔧")} />
-            : <Bubble key={m.id} who={m.role === "user" ? "user" : "bot"} text={m.text} draft={m.isStreaming} />,
+            : <Bubble key={m.id} who={m.role === "user" ? "user" : "bot"} text={m.text} />,
         )}
-        {state.typing && !state.messages.some((m) => m.isStreaming) && <Bubble who="bot" text="…" draft />}
+        {state.typing && !state.messages.some((m) => m.isStreaming) && <Typing />}
       </ol>
+      {/* Both controls are dead until the page has hydrated. A live-looking
+          input in server-rendered HTML is a trap: Enter submits the form
+          natively, the browser navigates, and the first message a visitor ever
+          types is the one that disappears. */}
       <form onSubmit={send} className="flex gap-2">
         <input
           value={draft}
           onChange={(e) => setDraft(e.target.value)}
-          placeholder="Write a message"
-          className="w-full rounded-full border border-neutral-200 bg-white px-4 py-2.5 text-[15px] outline-none transition focus:border-neutral-400 dark:border-neutral-800 dark:bg-neutral-900 dark:focus:border-neutral-600"
+          placeholder={!ready ? "Connecting…" : busy ? "…" : "Write a message"}
+          disabled={!ready || busy}
+          className="w-full rounded-full border border-neutral-200 bg-white px-4 py-2.5 text-[15px] outline-none transition focus:border-neutral-400 disabled:opacity-60 dark:border-neutral-800 dark:bg-neutral-900 dark:focus:border-neutral-600"
         />
-        <button disabled={!ready} className="rounded-full bg-neutral-900 px-5 py-2.5 text-sm text-white transition hover:bg-neutral-700 disabled:opacity-50 dark:bg-white dark:text-neutral-900 dark:hover:bg-neutral-200">
+        <button disabled={!ready || busy} className="rounded-full bg-neutral-900 px-5 py-2.5 text-sm text-white transition hover:bg-neutral-700 disabled:opacity-50 dark:bg-white dark:text-neutral-900 dark:hover:bg-neutral-200">
           Send
         </button>
       </form>
       {state.error && <p className="text-sm text-red-600">{state.error}</p>}
     </section>
+  );
+}
+
+function Typing() {
+  return (
+    <li className="flex justify-start">
+      <span className="flex items-center gap-1 rounded-2xl bg-white px-4 py-3 ring-1 ring-neutral-200 dark:bg-neutral-900 dark:ring-neutral-800">
+        {[0, 150, 300].map((d) => (
+          <span key={d} className="h-1.5 w-1.5 animate-bounce rounded-full bg-neutral-400" style={{ animationDelay: `${d}ms` }} />
+        ))}
+      </span>
+    </li>
   );
 }
 
@@ -268,7 +358,12 @@ function PastCall({ call }: { call: CallRow }) {
       <details className="py-4">
         <summary className="flex cursor-pointer list-none items-center justify-between gap-4 text-sm">
           <span className="flex items-center gap-3">
-            <span className="tabular-nums text-neutral-400">{when}</span>
+            {/* The server formats in the box's timezone, the browser in the
+                visitor's. React calls that a hydration mismatch and re-renders
+                the whole page from the root — which quietly destroys the chat
+                session and loses whatever is being typed. The browser's answer
+                is the right one; say so instead of arguing. */}
+            <span suppressHydrationWarning className="tabular-nums text-neutral-400">{when}</span>
             <span>{call.from}</span>
             <span className="text-neutral-400">{call.transport}</span>
           </span>
@@ -323,9 +418,12 @@ function Bubble({ who, text, draft }: { who: Line["who"]; text: string; draft?: 
   const user = who === "user";
   return (
     <li className={`flex ${user ? "justify-end" : "justify-start"}`}>
-      <p className={`max-w-[80%] rounded-2xl px-4 py-2.5 text-[15px] leading-relaxed ${
+      <div className={`max-w-[85%] space-y-2 rounded-2xl px-4 py-2.5 text-[15px] leading-relaxed ${
         user ? "bg-neutral-900 text-white dark:bg-white dark:text-neutral-900" : "bg-white ring-1 ring-neutral-200 dark:bg-neutral-900 dark:ring-neutral-800"
-      } ${draft ? "opacity-50" : ""}`}>{text || "…"}</p>
+      } ${draft ? "opacity-50" : ""}`}>
+        {/* The user typed plain text; the agent writes markdown-lite. */}
+        {user ? <p className="whitespace-pre-wrap">{text || "…"}</p> : <Markdown text={text || "…"} />}
+      </div>
     </li>
   );
 }

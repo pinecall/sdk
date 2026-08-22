@@ -32,7 +32,14 @@ agent's tool calls inline — `⚙ getQuote {service:deep,…} → {priceRangeUs
 so you can see it looked the price up instead of inventing it.
 
 **…or type** is `ChatSession` from `@pinecall/web/chat` against the same agent:
-same prompt, same tools, same knowledge base, no microphone.
+same prompt, same tools, same knowledge base, no microphone. One conversation
+per visitor — the socket opens when the panel mounts and a `thread` id kept in
+`localStorage` means a refresh, a backgrounded tab or a redeploy reconnects into
+the same conversation instead of starting a stranger. Connect exactly once:
+`connect()` assigns its socket after awaiting the token, so two overlapping
+calls open two WebSockets and the server counts two conversations. Bubbles go
+through `app/calls/markdown.tsx`, forty lines of bold/italics/code/links/lists —
+the agent is told on `chat.started` that here it is writing, not speaking.
 
 **Watch · live** is fed by `/api/events`, Server-Sent Events off the in-process
 bus — `call.started`, `turn`, `user.speaking`, `bot.word`, `transcript`,
@@ -77,8 +84,13 @@ and the same agent answers that number too.
 Never bare `shipway deploy`: `smoke.mjs` runs eleven assertions against
 production — DNS, TLS, the http→https redirect, `/` renders, both tokens mint,
 `/api/calls`, `/api/events` actually streams (a buffering proxy is caught
-here), the agent answers a chat message, it calls a tool, and it is registered
-and active on voice.pinecall.io.
+here), the agent answers a chat message, it calls a tool in that same
+session, and it is registered and active on voice.pinecall.io.
+
+`node scripts/chat-check.mjs [origin]` is the other half: it mints a token
+through the site's own `/api/chat-token`, opens ONE `ChatSession` and sends
+three chained messages. It exits non-zero unless all three ran in a single
+session — the agent has to still know the quote when asked to book it.
 
 Where things live, once:
 
