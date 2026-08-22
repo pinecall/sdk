@@ -5,6 +5,7 @@
   "scripts": {
     "tap": "node scripts/tap.mjs",
     "scrape": "node scripts/scrape.mjs",
+    "rag-check": "node scripts/rag-check.mjs",
     "start": "pinecall run agent.mjs",
     "converse": "node scripts/converse.mjs"
   },
