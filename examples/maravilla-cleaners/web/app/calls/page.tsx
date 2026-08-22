@@ -145,8 +145,17 @@ function threadId(): string {
   }
 }
 
-/** Resolves when the server has answered `chat.connected` — not before. */
-function whenConnected(session: ChatSession, ms = 15000) {
+/**
+ * Resolves when the server has answered `chat.connected` — not before.
+ *
+ * Nothing here calls `connect()` a second time, and that is the point.
+ * `ChatSession.connect()` only assigns `this.ws` AFTER awaiting the token, so
+ * its `if (this.ws) return` guard does not hold against a concurrent call: two
+ * overlapping connects open two WebSockets, and every WebSocket is one more
+ * conversation on the server. The panel connects exactly once, on mount, and
+ * lets the session's own auto-reconnect handle a socket that dies.
+ */
+function whenConnected(session: ChatSession, ms = 20000) {
   if (session.getState().status === "connected") return Promise.resolve();
   return new Promise<void>((resolve, reject) => {
     let off = () => {};
@@ -154,22 +163,24 @@ function whenConnected(session: ChatSession, ms = 15000) {
     off = session.subscribe(() => {
       const { status } = session.getState();
       if (status === "connected") (clearTimeout(timer), off(), resolve());
-      if (status === "error") (clearTimeout(timer), off(), reject(new Error("chat error")));
+      if (status === "destroyed") (clearTimeout(timer), off(), reject(new Error("chat destroyed")));
     });
   });
 }
 
 function BrowserChat({ agent }: { agent: string }) {
   const sessionRef = useRef<ChatSession | null>(null);
+  // The chat client is a dynamic import: someone who types in the first second
+  // is typing before it lands. Awaiting this promise is what keeps that message
+  // instead of dropping it on an empty ref.
+  const arriving = useRef<Promise<ChatSession> | null>(null);
   const [ready, setReady] = useState(false);
   const [draft, setDraft] = useState("");
   const log = useRef<HTMLOListElement | null>(null);
 
   useEffect(() => {
-    let alive = true;
     let cleanup = () => {};
-    import("@pinecall/web/chat").then(({ ChatSession }) => {
-      if (!alive) return;
+    arriving.current = import("@pinecall/web/chat").then(({ ChatSession }) => {
       const session = new ChatSession({
         agent,
         thread: threadId(),
@@ -182,8 +193,9 @@ function BrowserChat({ agent }: { agent: string }) {
       // proxy might impose: a cleared context block is a no-op the socket feels.
       const beat = setInterval(() => session.setContext("keepalive", null), 25_000);
       cleanup = () => (clearInterval(beat), session.destroy());
+      return session;
     });
-    return () => { alive = false; cleanup(); };
+    return () => cleanup();
   }, [agent]);
 
   const state = useSyncExternalStore(
@@ -198,13 +210,13 @@ function BrowserChat({ agent }: { agent: string }) {
 
   const send = async (event: React.FormEvent) => {
     event.preventDefault();
-    const session = sessionRef.current;
     const text = draft.trim();
-    if (!text || !session || state.typing) return;
+    if (!text || state.typing) return;
     setDraft("");
     try {
-      await session.connect();          // a no-op while the socket is up
-      await whenConnected(session);     // …and this is what the first send needs
+      const session = await arriving.current;
+      if (!session) throw new Error("no chat client");
+      await whenConnected(session);     // what the very first message needs
       session.send(text);
     } catch {
       setDraft(text);                   // nothing was sent — give the words back
@@ -229,12 +241,16 @@ function BrowserChat({ agent }: { agent: string }) {
         )}
         {state.typing && !state.messages.some((m) => m.isStreaming) && <Typing />}
       </ol>
+      {/* Both controls are dead until the page has hydrated. A live-looking
+          input in server-rendered HTML is a trap: Enter submits the form
+          natively, the browser navigates, and the first message a visitor ever
+          types is the one that disappears. */}
       <form onSubmit={send} className="flex gap-2">
         <input
           value={draft}
           onChange={(e) => setDraft(e.target.value)}
-          placeholder={busy ? "…" : "Write a message"}
-          disabled={busy}
+          placeholder={!ready ? "Connecting…" : busy ? "…" : "Write a message"}
+          disabled={!ready || busy}
           className="w-full rounded-full border border-neutral-200 bg-white px-4 py-2.5 text-[15px] outline-none transition focus:border-neutral-400 disabled:opacity-60 dark:border-neutral-800 dark:bg-neutral-900 dark:focus:border-neutral-600"
         />
         <button disabled={!ready || busy} className="rounded-full bg-neutral-900 px-5 py-2.5 text-sm text-white transition hover:bg-neutral-700 disabled:opacity-50 dark:bg-white dark:text-neutral-900 dark:hover:bg-neutral-200">
@@ -342,7 +358,12 @@ function PastCall({ call }: { call: CallRow }) {
       <details className="py-4">
         <summary className="flex cursor-pointer list-none items-center justify-between gap-4 text-sm">
           <span className="flex items-center gap-3">
-            <span className="tabular-nums text-neutral-400">{when}</span>
+            {/* The server formats in the box's timezone, the browser in the
+                visitor's. React calls that a hydration mismatch and re-renders
+                the whole page from the root — which quietly destroys the chat
+                session and loses whatever is being typed. The browser's answer
+                is the right one; say so instead of arguing. */}
+            <span suppressHydrationWarning className="tabular-nums text-neutral-400">{when}</span>
             <span>{call.from}</span>
             <span className="text-neutral-400">{call.transport}</span>
           </span>
