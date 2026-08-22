@@ -112,14 +112,17 @@ npm run scrape
 discovered 80 same-origin URLs (sitemap, capped at 80)
 ... (per-page ✓/⋯/✗ lines omitted here — see the terminal for the full crawl log)
 boilerplate: 5 lines seen on > 50% of pages, kept once in _site.md
+enriching 76 docs ...
+... (per-page enrich ✓/✗ lines omitted — see "Enrich numbers" below)
 pushing 76 docs to 6a88ce38093d0c0b471822b4 ...
 
 === scrape totals ===
 pages rendered:  80
 pages kept:      75          (5 dropped: < 40 words after extraction — thin/empty shells)
-words:           16659
-tokens (~):      32781
+words:           16664
+tokens (~):      32792
 docs pushed:     76/76        (75 pages + _site.md)
+enrich:          71 enriched, 3 cached, 2 errors, 73 titles replaced, $0.00455
 ```
 
 The knowledge base now holds **84 documents** total: the 9 `llms.txt` docs plus the 76 scraped
@@ -127,6 +130,110 @@ ones, minus one path collision (`contact.md` — both the `llms.txt` split and t
 `/contact` page land on that path; the rendered page's fuller content won on the upsert, which
 is the intended behavior for a path that both routes produce). The other 8 `llms.txt` docs are
 untouched.
+
+## LLM enrichment (`scripts/enrich.mjs`)
+
+All 76 scraped pages carry the SPA's one static `<title>` —
+`Maravilla — Marvelously Clean.` — so BM25 (the hybrid retriever's keyword lane) never sees
+the words a caller actually says for a specific page; every doc's title token is identical.
+This is exactly option D of
+[`docs/notes/tap-llm-quality-research.md`](../../docs/notes/tap-llm-quality-research.md)
+(§3 D, §6–§7): one call per page to Pinecall's own LLM gateway
+(`POST /api/llm/chat`, no `model` field → the gateway's cheap default,
+`openrouter/qwen/qwen3-30b-a3b-instruct-2507`) asking for a descriptive title, a breadcrumb,
+a one-sentence summary, 3–5 questions the page answers, and 5–12 keywords — inserted as a
+`## What this page answers` header right under the frontmatter. The body is never touched.
+
+**Title rule (the measured trap, §6.2).** The cheap model rewrites *every* title it's asked
+for, and on a site whose titles were already good that cost 0.13 MRR in the research
+(basecamp). So `scripts/enrich.mjs` only replaces the doc's `title` frontmatter when the
+original is empty, a bare date, or the SPA's static site name — otherwise the original title
+is kept and the generated one lives in the header only. Here all 75 SPA-titled pages qualify
+for substitution (they're all the same site name); `_site.md`, which already has a real title,
+does not.
+
+**Cache.** Enrichments are cached in `.enrich-cache.json` (gitignored) keyed by the sha256 of
+the page *body* — not the whole doc text, since the frontmatter's `scraped_at` changes on
+every run and would defeat a whole-text hash. An unchanged page costs zero LLM calls on the
+next `npm run scrape`; `--no-enrich` skips the lane entirely for a cheap re-push.
+
+**Errors.** A truncated or malformed reply (not valid JSON — seen twice below, both from
+the model running past `max_tokens: 400` on longer policy pages) aborts that one page (kept
+as scraped, un-enriched) and the run keeps going; a genuinely empty stream (no token, no
+usage, no error — the outage mode seen 2026-08-21 in the research) is retried up to 3 times
+and treated as a failure, never as success. The run exits non-zero if more than 10% of
+attempted pages fail.
+
+```bash
+npm run scrape             # render → extract → enrich → push, one flow
+npm run scrape -- --no-enrich   # skip the LLM lane (cheap re-push after e.g. a copy fix)
+```
+
+### Enrich numbers (first run, cold cache)
+
+```
+✗ enrich social-media-moderation-policy.md: not JSON: {"title": ... (truncated at max_tokens)
+✗ enrich solutions/gsa-schedule.md: not JSON: {"title": ... (truncated at max_tokens)
+enrich: 71 enriched, 3 cached, 2 errors, 73 titles replaced, $0.0045 spent
+```
+
+2/76 pages failed (2.6%, under the 10% budget) — both kept their original scraped title/body,
+no LLM header. 3 pages hit an identical cached hash within the same run (pages whose
+extracted body is byte-identical, e.g. near-duplicate stub pages) and cost zero calls.
+
+**Idempotence check.** Re-running `npm run scrape` twice more with a warm cache surfaced a
+real bug and fixed it: the failure budget was originally `errors / attempted-this-run`, so
+on a fully-cached re-run a single persistently-failing page (`social-media-moderation-policy.md`,
+its generated JSON kept running past `max_tokens: 400` on both attempts) was 1/2 = 50% and
+aborted the whole flow *before the push* — a page that fails once would break every future
+`npm run scrape` forever. Fixed two ways: `max_tokens` 400 → 700 (this alone fixed
+`solutions/gsa-schedule.md`, which only needed the extra room), and the denominator changed
+to the whole page set (`errors / docs.length`), so one stubborn page reads as 1.3% and the
+run finishes and pushes. Third run: `0 enriched, 75 cached, 1 errors, $0` — confirms the
+cache makes a re-run free, and the retrieval numbers above (measured against this same live
+KB) are unaffected — `social-media-moderation-policy.md` isn't one of the 12 fixture
+questions.
+
+## Retrieval — before vs after enrichment
+
+`scripts/rag-check.mjs` runs 12 realistic caller questions (`scripts/rag-check.fixture.json`)
+through `queryKnowledge` (top 10) and checks the rank of the doc path that should answer each
+one — a mix of service pages, industry pages, contact/location, and two questions only the
+`llms.txt` docs answer (a manifest-style listing, not a page a caller would naturally reach).
+
+| # | question | expected doc | rank before | rank after |
+|---|---|---|---|---|
+| 1 | Do you do mold fogging? | `solutions/mold-fogging.md` | 1 | 1 |
+| 2 | Can you clean a hospital or medical office? | `industries/healthcare.md` | 1 | 1 |
+| 3 | Do you offer pressure washing for a building exterior? | `solutions/pressure-washing.md` | 1 | 1 |
+| 4 | What's your phone number? | `contact.md` | 2 | 1 |
+| 5 | Where is Maravilla headquartered? | `contact.md` | >10 | 2 |
+| 6 | Do you clean schools or university campuses? | `industries/education.md` | 1 | 1 |
+| 7 | Do you handle biohazard cleanup? | `solutions/biohazard-remediation.md` | 1 | 1 |
+| 8 | Can you do a move-out cleaning before I hand back the keys? | `solutions/move-in-out.md` | 1 | 1 |
+| 9 | Do you do Airbnb turnover cleaning between guests? | `solutions/airbnb-turnover.md` | 1 | 1 |
+| 10 | What's the complete list of every service page on your site? | `service-pages-54.md` | 1 | 1 |
+| 11 | What are the most comprehensive guides on your site about compliance and government contracts? | `read-these-first-the-4-most-comprehensive-pieces.md` | 1 | 1 |
+| 12 | Can I read customer reviews of Maravilla? | `reviews.md` | 1 | 1 |
+
+| | hits@5 | MRR |
+|---|---|---|
+| before | 11/12 | 0.883 |
+| after | 12/12 | 0.958 |
+
+**No regression.** Every question that already ranked 1 stayed at rank 1 — none of the two
+llms.txt-only questions were pushed down by the newly-enriched scraped pages (unlike the
+basecamp case in the research, where the cheap model's title rewrite outranked the correct
+page). Two questions improved: "What's your phone number?" moved rank 2 → 1, and "Where is
+Maravilla headquartered?" moved from outside the top 10 to rank 2 (still short of hits@5's
+top-5, but now findable at all) — `contact.md`'s generated header adds "headquartered" and
+"Miami-Dade (HQ)" as keywords/breadcrumb next to the phone/email block the raw page never
+phrases that way. Raw numbers: `rag-check.before.json`, `rag-check.after.json` (both
+committed, per-question ranks and the exact top hit for every miss).
+
+The 8 remaining `llms.txt` docs (excluding `contact.md`, which the scrape overwrote) were
+**not** enriched: all their questions already ranked 1 in the baseline — no retrieval headroom
+to gain, and the instructions for this lane are to never touch their curated titles or bodies.
 
 ## The six tools (`tools.mjs` → `crm/index.mjs`)
 
